@@ -1,1 +1,4 @@
 venv/
+models_storage/.DS_Store
+models_storage/ResNet18/
+models_storage/ResNet50/
