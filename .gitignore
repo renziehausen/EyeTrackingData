@@ -2,4 +2,7 @@ venv/
 models_storage/.DS_Store
 models_storage/ResNet18/
 models_storage/ResNet50/
+models_storage/ResNet18/*.pt
 models_storage/ResNet50/*.pt
+outputs/
+pupilsense/
