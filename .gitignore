@@ -6,3 +6,5 @@ models_storage/ResNet18/*.pt
 models_storage/ResNet50/*.pt
 outputs/
 pupilsense/
+**__pycache__**/
+fresh-repo/
