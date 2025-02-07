@@ -5,9 +5,31 @@ import torch.nn as nn
 def load_model(model_path):
     """Load a ResNet model and modify for regression."""
     model = models.resnet18() if "ResNet18" in model_path else models.resnet50()
-    model.fc = nn.Linear(model.fc.in_features, 1)
-    model.load_state_dict(torch.load(model_path, map_location=torch.device("cpu"), weights_only=False))
+
+    # Adjust the final layer for regression (1 output neuron)
+    model.fc = nn.Linear(model.fc.in_features, 1)  
+
+    # Load the state dict with potential prefix handling
+    state_dict = torch.load(model_path, map_location=torch.device("cpu"))
+
+    # Remove the 'resnet.' prefix if it exists
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        if key.startswith("resnet."):
+            new_state_dict[key[len("resnet."):]] = value  # Strip "resnet."
+        else:
+            new_state_dict[key] = value
+
+    # Remove fc weights from checkpoint since they don't match
+    if "fc.weight" in new_state_dict:
+        del new_state_dict["fc.weight"]
+    if "fc.bias" in new_state_dict:
+        del new_state_dict["fc.bias"]
+
+    # Load the modified state dict
+    model.load_state_dict(new_state_dict, strict=False)
     model.eval()
+    
     return model
 
 # Load models
