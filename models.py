@@ -1,6 +1,7 @@
 import torch
 import torchvision.models as models
 import torch.nn as nn
+import cv2
 
 def load_model(model_path):
     """Load a ResNet model and modify for regression."""
@@ -40,10 +41,26 @@ right_model_50 = load_model("models_storage/ResNet50/right_eye.pt")
 
 def predict_pupil_diameter(model, eye_img):
     """Predict pupil diameter from eye image."""
-    if eye_img is None:
+    if eye_img is None or len(eye_img) == 0:
         return 0
 
-    eye_img = torch.tensor(eye_img, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    # Ensure input is a NumPy array
+    if isinstance(eye_img, list):
+        eye_img = np.array(eye_img, dtype=np.float32)
+
+    # Resize to 224x224 (expected by ResNet)
+    eye_img = cv2.resize(eye_img, (224, 224), interpolation=cv2.INTER_CUBIC)
+
+    # Convert to tensor
+    eye_img = torch.tensor(eye_img, dtype=torch.float32)
+
+    # Ensure correct format (batch, channels, height, width)
+    if eye_img.ndim == 3 and eye_img.shape[-1] == 3:
+        eye_img = eye_img.permute(2, 0, 1)  # Convert (H, W, C) → (C, H, W)
+
+    eye_img = eye_img.unsqueeze(0)  # Add batch dimension → [1, 3, 224, 224]
+
     with torch.no_grad():
         output = model(eye_img)
+
     return output.item()
