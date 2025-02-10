@@ -8,8 +8,7 @@ import matplotlib.pyplot as plt
 from camera_input import capture_selected_camera_feed
 from preprocessing import extract_eye_regions
 from models import predict_pupil_diameter, left_model_18, right_model_18, left_model_50, right_model_50
-from blink_detection import detect_blinks_vit
-from preprocessing import extract_eye_regions  # Assuming this extracts landmarks
+from blink_detection import detect_blink
 
 ####################################################
 # Enter particpant ID
@@ -27,7 +26,7 @@ processed_csv_file = f"outputs/participant_{participant_id}_processed.csv" #reru
 df = pd.DataFrame(columns=[
     "Timestamp", "Frame Number",
     "Left_ResNet18", "Right_ResNet18", "Left_ResNet50", "Right_ResNet50",
-    "ViT Left Blink", "ViT Right Blink", "ViT Left Prob", "ViT Right Prob",
+    "Blink Detected", "Left EAR", "Right EAR", "Vit Left Prob", "Vit Right Prob",
     "Intervention"
 ])
 
@@ -46,7 +45,13 @@ plt.show(block=False)
 # Initialize lists to store data for live plotting.
 frame_numbers = []
 blink_probs = []
-pupil_values = []
+left18_values = []
+right18_values = []
+left50_values = []
+right50_values = []
+BLINK_LOWER_THRESH = 0.22
+BLINK_UPPER_THRESH = 0.25
+
 
 # showing the timer and the interventions in the live graphs
 intervention_frames = []
@@ -111,40 +116,48 @@ while True:
         frame_counters[i] += 1  # Increment frame counter for this camera
         frame_count += 1
 
-        left_eye, right_eye = extract_eye_regions(frame)
+        left_eye, right_eye, left_EAR, right_EAR = extract_eye_regions(frame)
         # Ensure eyes are detected
         if left_eye is None or right_eye is None:
             continue  # Skip frame if eyes are not detected
 
-        # Predict pupil diameter
-        left_18 = predict_pupil_diameter(left_model_18, left_eye)
-        right_18 = predict_pupil_diameter(right_model_18, right_eye)
-        left_50 = predict_pupil_diameter(left_model_50, left_eye)
-        right_50 = predict_pupil_diameter(right_model_50, right_eye)
+        # Combined blink detection: using EAR (and ViT confirmation when ambiguous)
+        blinked, avg_EAR, vit_left_prob, vit_right_prob = detect_blink(frame, extract_eye_regions)
 
-        # Blink detection
-        # Blink detection using ViT
-        vit_left_blink, vit_right_blink, vit_left_prob, vit_right_prob = detect_blinks_vit(frame, left_eye, right_eye)
-        """
-        Removed in favor of the live graphs.
-        # Display results on screen
-        cv2.putText(frame, f"L18: {left_18:.2f}mm", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, f"R18: {right_18:.2f}mm", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, f"L50: {left_50:.2f}mm", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, f"R50: {right_50:.2f}mm", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, f"ViT Left Blink: {vit_left_blink}", (50, 350), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-        cv2.putText(frame, f"ViT Right Blink: {vit_right_blink}", (50, 400), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-        """
+        if blinked:
+            left_18 = right_18 = left_50 = right_50 = float('nan') #set all to nan if blinked
+        else:
+            # Predict pupil diameter for each model.
+            left_18 = predict_pupil_diameter(left_model_18, left_eye)
+            right_18 = predict_pupil_diameter(right_model_18, right_eye)
+            left_50 = predict_pupil_diameter(left_model_50, left_eye)
+            right_50 = predict_pupil_diameter(right_model_50, right_eye)
+
         # show recording status
         if recording:
             # Stuff for live plots
             frame_numbers.append(frame_count)
 
-            avg_blink_prob = (vit_left_prob + vit_right_prob) / 2.0
-            blink_probs.append(avg_blink_prob)
+            # Append individual pupil values for live plotting.
+            left18_values.append(left_18)
+            right18_values.append(right_18)
+            left50_values.append(left_50)
+            right50_values.append(right_50)
 
-            avg_pupil = (left_18 + right_18) / 2.0
-            pupil_values.append(avg_pupil)
+            # Compute the blink metric for plotting:
+            if avg_EAR is None:
+                plot_blink = 0.0  # no face detected, default to 0
+            elif avg_EAR <= BLINK_LOWER_THRESH:
+                # Clearly blinking (EAR very low): plot as 1
+                plot_blink = 1.0
+            elif avg_EAR > BLINK_UPPER_THRESH:
+                # Clearly not blinking: plot as 0
+                plot_blink = 0.0
+            else:
+                # Ambiguous EAR: use the average Vit probability
+                plot_blink = (vit_left_prob + vit_right_prob) / 2.0
+
+            blink_probs.append(plot_blink)
 
             #Timer
             elapsed_time = time.time() - recording_start_time if recording_start_time else 0
@@ -169,12 +182,16 @@ while True:
                 
                 # Update the pupil prediction plot.
                 ax2.clear()
-                ax2.plot(frame_numbers, pupil_values, 'b-', label='Pupil Prediction (mm)')
-                for int_frame in intervention_frames:
-                    ax2.axvline(x=int_frame, color='green', linestyle='--', label='Intervention')
-                ax2.set_title("Pupil Prediction")
+                # Plot each model's pupil prediction with a distinct color and label.
+                ax2.plot(frame_numbers, left18_values, 'b-', label='Left ResNet18')
+                ax2.plot(frame_numbers, right18_values, 'g-', label='Right ResNet18')
+                ax2.plot(frame_numbers, left50_values, 'r-', label='Left ResNet50')
+                ax2.plot(frame_numbers, right50_values, 'y-', label='Right ResNet50')
+                
+                ax2.set_title("Pupil Prediction (mm)")
                 ax2.set_xlabel("Frame")
                 ax2.set_ylabel("Pupil (mm)")
+                # Remove duplicate legend entries.
                 handles2, labels2 = ax2.get_legend_handles_labels()
                 by_label2 = dict(zip(labels2, handles2))
                 ax2.legend(by_label2.values(), by_label2.keys(), loc='upper left')
@@ -189,14 +206,20 @@ while True:
 
 
         cv2.imshow(f"Camera {i} Feed", frame)
+        # Below: For debugging the eye area detection
+        #cv2.imshow("Left Eye", left_eye)
+        #cv2.imshow("Right Eye", right_eye)
 
         # Write frame to video file if recording is acvtive
         if recording:
             video_writers[i].write(frame)
             # Save results
             df.loc[len(df)] = [
-            pd.Timestamp.now(), frame_count, left_18, right_18, left_50, right_50, 
-            vit_left_blink, vit_right_blink, vit_left_prob, vit_right_prob, ""
+                pd.Timestamp.now(), frame_count,
+                left_18, right_18, left_50, right_50,
+                blinked, left_EAR, right_EAR,  # log the raw EAR values
+                vit_left_prob, vit_right_prob,
+                ""
             ]
             df.to_csv(csv_file, index=False)
 
